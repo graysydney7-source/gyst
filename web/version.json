@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "notes": "",
+  "files": ["index.html", "style.css", "updater.js", "scene.js", "audio.js", "app.js"]
+}

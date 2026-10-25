@@ -1,0 +1,20 @@
+🎀 GYST — get your shit together
+
+1. Drag GYST into the Applications folder (the shortcut right next to it).
+2. Open Applications and double-click GYST.
+
+The first time, your Mac may say GYST "can't be opened" or "Apple could not
+verify" it. That's only because it was made at home, not bought from the App Store.
+
+To allow it:
+  • Open System Settings → Privacy & Security
+  • Scroll down to the message about GYST and click "Open Anyway"
+  • Enter your Mac password if asked, then click "Open Anyway" again
+
+(On older macOS versions you can instead right-click GYST → Open → Open.)
+
+You only have to do this once.
+
+Your data stays on your Mac, in ~/Library/Application Support/GYST
+(with an automatic daily backup). Export a backup any time from the
+settings button at the bottom of the sidebar.
