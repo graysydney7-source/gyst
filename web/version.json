@@ -1,5 +1,12 @@
 {
-  "version": 1,
-  "notes": "",
-  "files": ["index.html", "style.css", "updater.js", "scene.js", "audio.js", "app.js"]
+  "version": 2,
+  "notes": "Deleting works again \u2014 tap Delete twice to confirm.",
+  "files": [
+    "index.html",
+    "style.css",
+    "updater.js",
+    "scene.js",
+    "audio.js",
+    "app.js"
+  ]
 }
