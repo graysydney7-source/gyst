@@ -96,6 +96,7 @@ body.scene-mode #scene-exit:hover { opacity: 1; }
 .nav-btn.active::before { content: ""; position: absolute; left: -12px; top: 8px; bottom: 8px; width: 3px; border-radius: 0 3px 3px 0; background: var(--pink); }
 .nav-btn .badge { background: var(--pink); color: #fff; font-size: 10.5px; padding: 0 6px; border-radius: 99px; line-height: 17px; font-weight: 600; }
 .nav-sep { height: 1px; background: var(--line); margin: 7px 10px; }
+.side-foot .nav-btn span { white-space: nowrap; }
 .side-foot { margin-top: auto; padding: 12px 6px 0; display: flex; flex-direction: column; gap: 8px; }
 .side-clock { padding: 0 6px; }
 .side-clock b { font-family: var(--serif); font-size: 26px; font-weight: 400; display: block; line-height: 1.1; }

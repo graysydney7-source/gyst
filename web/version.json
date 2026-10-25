@@ -1,6 +1,6 @@
 {
-  "version": 2,
-  "notes": "Deleting works again \u2014 tap Delete twice to confirm.",
+  "version": 3,
+  "notes": "Reminders are here \u2014 tap the bell in the sidebar to turn them on.",
   "files": [
     "index.html",
     "style.css",

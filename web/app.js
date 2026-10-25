@@ -53,6 +53,7 @@ const I = {
   reset2: sv('<path d="M4 5v14"/><path d="M8 12h11"/><path d="M15 7l5 5-5 5"/>'),
   backup: sv('<path d="M12 3v12M7 10l5 5 5-5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>'),
   link: sv('<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>'),
+  bell: sv('<path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>'),
   alarm: sv('<circle cx="12" cy="13" r="7.5"/><path d="M12 9.5V13h3"/><path d="M4 4.5l2.5-2M20 4.5l-2.5-2"/>'),
 };
 
@@ -136,7 +137,7 @@ function seed() {
       { id: uid(), name: 'Read 10 pages', icon: '📖', log: {} },
     ],
     journal: {}, water: {}, focus: {},
-    settings: { view: 'today', sound: {}, sparkles: true, weeklyMins: 150, waterGoal: 8, payRate: 0 }
+    settings: { view: 'today', sound: {}, sparkles: true, weeklyMins: 150, waterGoal: 8, payRate: 0, remindersOn: false, rem: {} }
   };
 }
 function migrate(s) {
@@ -164,6 +165,7 @@ function save() {
     const json = JSON.stringify(S);
     try { window.webkit.messageHandlers.save.postMessage(json); } catch (e) { }
     try { localStorage.setItem('gyst', json); } catch (e) { }
+    queueReminders();
   }, 250);
 }
 window.GY = {
@@ -310,6 +312,55 @@ function fixedFor(k) {
     + S.apps.filter(a => a.deadline === k).map(a => `<div class="day-extra due">🎓 ${esc(a.school)} deadline</div>`).join('');
 }
 
+/* ---------- reminders (macOS notifications) ---------- */
+// the native shell only schedules what it's handed; everything about *what* to remind lives here so it can ship as an update
+const CAN_NOTIFY = NATIVE && !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.notifySchedule);
+const REM_DEFAULTS = { morning: '08:00', classMins: 15, shiftMins: 30, eventMins: 15, dueNight: '19:00', apps: true, sunday: '18:00', water: false };
+const rem = () => Object.assign({}, REM_DEFAULTS, S.settings.rem || {});
+const post = (name, body = '') => { try { window.webkit.messageHandlers[name].postMessage(body); } catch (e) { } };
+window.GYNotify = {
+  status(st) {
+    const was = UI.notify; UI.notify = st;
+    if (st === 'granted' && S.settings.remindersOn) syncReminders();
+    if (was !== st) { if (UI.view === 'today') render(); if (UI.remOpen && $('#modal-root').innerHTML) A.reminders(); }
+  }
+};
+const at = (k, hm, minsBefore = 0) => { const [h, m] = (hm || '09:00').split(':').map(Number); const d = parse(k); d.setHours(h, m - minsBefore, 0, 0); return +d; };
+function buildReminders() {
+  const r = rem(), out = [], now = Date.now(), days = Array.from({ length: 8 }, (_, i) => ymd(addDays(new Date(), i)));
+  const add = (id, when, title, body) => { if (when > now + 30000) out.push({ id, at: when, title, body }); };
+  for (const k of days) {
+    const cls = classesOn(k), sh = S.shifts.filter(x => x.date === k), dueT = S.assignments.filter(a => !a.done && a.due === k), todos = S.tasks.filter(t => !t.done && t.date === k);
+    if (r.morning) {
+      const bits = [];
+      if (cls.length) bits.push(`${cls.length} class${cls.length > 1 ? 'es' : ''} (first at ${fmtTime(cls[0].start)})`);
+      sh.forEach(x => bits.push(`work ${fmtTime(x.start)}–${fmtTime(x.end)}`));
+      if (dueT.length) bits.push(`${dueT.length} thing${dueT.length > 1 ? 's' : ''} due`);
+      if (todos.length) bits.push(`${todos.length} to-do${todos.length > 1 ? 's' : ''}`);
+      add(`morning-${k}`, at(k, r.morning), 'Good morning ☀️', bits.length ? `Today: ${bits.join(' · ')}.` : 'Nothing on the calendar today. Make it a good one.');
+    }
+    if (r.classMins) cls.forEach(c => c.start && add(`class-${c.id}-${k}`, at(k, c.start, +r.classMins), `${c.code || c.name} in ${r.classMins} min`, [c.name, c.room].filter(Boolean).join(' · ')));
+    if (r.shiftMins) sh.forEach(x => add(`shift-${x.id}`, at(k, x.start, +r.shiftMins), `Work in ${r.shiftMins} min`, `${fmtTime(x.start)} – ${fmtTime(x.end)}${x.role ? ' · ' + x.role : ''}`));
+    if (r.eventMins) S.events.filter(e => e.date === k && e.time).forEach(e => add(`event-${e.id}`, at(k, e.time, +r.eventMins), `${e.title}`, `Starts at ${fmtTime(e.time)}`));
+    if (r.dueNight) {
+      const tomorrow = ymd(addDays(parse(k), 1));
+      S.assignments.filter(a => !a.done && a.due === tomorrow).forEach(a => add(`due-${a.id}`, at(k, r.dueNight), `Due tomorrow: ${a.title}`, `${course(a.course).code || course(a.course).name} · ${(ATYPES[a.type] || ATYPES.assignment)[1]}`));
+      const in3 = ymd(addDays(parse(k), 3));
+      S.assignments.filter(a => !a.done && a.due === in3 && BIG.includes(a.type)).forEach(a => add(`big-${a.id}`, at(k, r.dueNight), `${(ATYPES[a.type] || ATYPES.assignment)[1]} in 3 days: ${a.title}`, 'A little bit each day — you’ve got this.'));
+    }
+    if (r.apps) appsOpen().filter(a => a.deadline).forEach(a => {
+      const left = daysBetween(k, a.deadline);
+      if (left === 7 || left === 1) add(`app-${a.id}-${left}`, at(k, '09:00'), `${a.school} is due ${left === 1 ? 'tomorrow' : 'in a week'} 🎓`, `${appPct(a)}% of the checklist done.`);
+    });
+    if (r.sunday && parse(k).getDay() === 0 && !S.planned[ymd(addDays(parse(k), 1))]) add(`sunday-${k}`, at(k, r.sunday), 'Sunday reset 🎀', 'Ten minutes to plan next week. Future you says thank you.');
+    if (r.water) ['11:00', '14:00', '17:00'].forEach(t => add(`water-${k}-${t}`, at(k, t), 'Water check 💧', 'Have a glass of water.'));
+  }
+  return out.sort((a, b) => a.at - b.at).slice(0, 60);
+}
+let remT;
+function syncReminders() { if (CAN_NOTIFY && UI.notify === 'granted') post('notifySchedule', JSON.stringify(S.settings.remindersOn ? buildReminders() : [])); }
+function queueReminders() { clearTimeout(remT); remT = setTimeout(syncReminders, 1500); }
+
 /* ---------- views ---------- */
 const R = {};
 
@@ -338,6 +389,7 @@ R.today = () => {
     <button class="btn ${nudgeSunday ? 'primary' : ''}" data-act="planAhead">${I.reset2} Sunday reset</button>
     <button class="btn" data-act="sceneMode">${I.eye} Vibe mode</button></div>
 
+    ${CAN_NOTIFY && UI.notify === 'notDetermined' && !S.settings.remAsked ? `<div class="card glass" style="display:flex;align-items:center;gap:14px;margin-bottom:16px;padding:14px 18px"><div class="card-h" style="margin:0"><div class="ico">${I.bell}</div></div><div style="flex:1"><b style="font-weight:500">Want reminders?</b><div class="muted" style="font-size:12.5px">Classes, shifts, due dates, grad deadlines and a good-morning summary — even when GYST is closed.</div></div><button class="btn ghost sm" data-act="remLater">Not now</button><button class="btn primary sm" data-act="notifyOn">Turn on</button></div>` : ''}
     <div class="grid porch-grid">
       <div class="card glass rowspan2 feature">
         ${cardH('sun', 'Today', `${due.filter(x => x.done).length}/${due.length} done`)}
@@ -858,6 +910,7 @@ function renderSidebar() {
       <div class="side-clock"><b id="clock"></b><span id="clock-sub"></span></div>
       <div style="display:flex;gap:4px">
         <button class="nav-btn" data-act="sceneMode" style="flex:1">${I.eye}<span>Vibe mode</span></button>
+        ${CAN_NOTIFY ? `<button class="icon-btn" data-act="reminders" title="Reminders" style="width:36px;height:36px">${I.bell}</button>` : ''}
         <button class="icon-btn" data-act="settings" title="Settings & backup" style="width:36px;height:36px">${I.backup}</button>
       </div>
     </div>`;
@@ -1148,6 +1201,7 @@ const A = {
         `<div class="eyebrow" style="margin:8px 0">Your data</div>
          <p class="muted" style="font-size:12.5px;margin:0 0 10px">${NATIVE ? 'Everything is saved on this Mac in ~/Library/Application Support/GYST (with a daily backup). Nothing leaves your computer.' : 'Saved in this browser.'}</p>
          ${NATIVE ? `<div class="eyebrow" style="margin:14px 0 8px">Updates</div><div style="display:flex;gap:10px;align-items:center;margin-bottom:12px"><span class="muted" style="font-size:12.5px">Version ${window.GYUpdate ? GYUpdate.version : '?'} · updates install automatically</span><button type="button" class="btn sm" data-act="checkUpdates">Check now</button></div>` : ''}
+         ${NATIVE && !CAN_NOTIFY ? `<p class="muted" style="font-size:12.5px;margin:0 0 12px">🔔 Reminders need the newest GYST download — reinstall from the latest GYST.dmg to turn them on.</p>` : ''}
          <div style="display:flex;gap:8px"><button type="button" class="btn sm" data-act="exportData">${I.backup} Export backup…</button>${NATIVE ? `<button type="button" class="btn sm" data-act="importData">Restore from backup…</button>` : ''}</div>`,
       onSubmit: d => { S.name = d.name.trim(); S.settings.waterGoal = Math.max(1, Math.min(16, +d.waterGoal || 8)); S.settings.weeklyMins = Math.max(10, +d.weeklyMins || 150); S.settings.payRate = Math.max(0, +d.payRate || 0); }
     });
@@ -1158,6 +1212,37 @@ const A = {
     const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([json], { type: 'application/json' })); a.download = `gyst-backup-${today()}.json`; a.click();
   },
   importData() { try { window.webkit.messageHandlers.importData.postMessage(''); } catch (e) { } },
+  notifyOn() { S.settings.remindersOn = true; S.settings.remAsked = true; save(); post('notifyRequest'); if (!UI.remOpen) render(); },
+  remLater() { S.settings.remAsked = true; save(); render(); },
+  notifySettings() { post('notifySettings'); },
+  notifyTest() { post('notifyTest'); toast('Sending a test notification…'); },
+  reminders() {
+    UI.remOpen = true; const r = rem(), st = UI.notify, on = S.settings.remindersOn && st === 'granted';
+    const mins = (name, val, opts) => `<select name="${name}">${opts.map(([v, l]) => `<option value="${v}" ${String(val) === String(v) ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
+    const off = [0, 'Off'], m = n => [n, `${n} min before`];
+    const status = st === 'granted' ? '' : st === 'denied'
+      ? `<p class="muted" style="font-size:13px;margin:0 0 12px">Notifications are turned off for GYST in System Settings.</p><button type="button" class="btn primary sm" data-act="notifySettings">Open Notification Settings</button><p class="muted" style="font-size:12px;margin-top:10px">Turn on “Allow notifications” for GYST, then come back here.</p>`
+      : `<p class="muted" style="font-size:13px;margin:0 0 12px">GYST can remind you about classes, shifts, due dates and grad deadlines — even when the app is closed.</p><button type="button" class="btn primary sm" data-act="notifyOn">${I.bell} Turn on notifications</button><p class="muted" style="font-size:12px;margin-top:10px">macOS will ask once — click <b>Allow</b>.</p>`;
+    const form = modal({
+      title: 'Reminders 🔔', submit: st === 'granted' ? 'Save' : 'Done',
+      body: status + (st === 'granted' ? `
+        <label style="display:flex;gap:8px;align-items:center;font-size:14px;margin:-4px 0 14px"><input type="checkbox" name="on" ${on ? 'checked' : ''}> Send me reminders</label>
+        <div class="two">${fld('Good-morning summary', mins('morning', r.morning, [['', 'Off'], ['06:30', '6:30am'], ['07:00', '7am'], ['07:30', '7:30am'], ['08:00', '8am'], ['08:30', '8:30am'], ['09:00', '9am'], ['10:00', '10am']]))}${fld('Classes', mins('classMins', r.classMins, [off, m(5), m(10), m(15), m(30)]))}</div>
+        <div class="two">${fld('Work shifts', mins('shiftMins', r.shiftMins, [off, m(15), m(30), m(45), m(60)]))}${fld('Events', mins('eventMins', r.eventMins, [off, m(10), m(15), m(30), m(60)]))}</div>
+        <div class="two">${fld('Due tomorrow (night before)', mins('dueNight', r.dueNight, [['', 'Off'], ['17:00', '5pm'], ['18:00', '6pm'], ['19:00', '7pm'], ['20:00', '8pm'], ['21:00', '9pm']]))}${fld('Sunday reset nudge', mins('sunday', r.sunday, [['', 'Off'], ['10:00', '10am'], ['14:00', '2pm'], ['17:00', '5pm'], ['18:00', '6pm'], ['19:00', '7pm']]))}</div>
+        <label style="display:flex;gap:8px;align-items:center;font-size:13px;color:var(--ink-2);margin-bottom:6px"><input type="checkbox" name="apps" ${r.apps ? 'checked' : ''}> Grad app deadlines (a week before and the day before)</label>
+        <label style="display:flex;gap:8px;align-items:center;font-size:13px;color:var(--ink-2);margin-bottom:12px"><input type="checkbox" name="water" ${r.water ? 'checked' : ''}> Water reminders (11am, 2pm, 5pm)</label>
+        <div style="display:flex;gap:8px;align-items:center"><button type="button" class="btn sm" data-act="notifyTest">Send a test</button><span class="muted" style="font-size:12px">Reminders cover the next week and refresh whenever you open GYST.</span></div>` : ''),
+      onSubmit: d => {
+        UI.remOpen = false;
+        if (st !== 'granted') return;
+        S.settings.remindersOn = !!d.on;
+        S.settings.rem = { morning: d.morning, classMins: +d.classMins, shiftMins: +d.shiftMins, eventMins: +d.eventMins, dueNight: d.dueNight, apps: !!d.apps, sunday: d.sunday, water: !!d.water };
+        toast(d.on ? '🔔 Reminders saved' : 'Reminders are off');
+      }
+    });
+    form.querySelector('[data-act="closeModal"]').addEventListener('click', () => { UI.remOpen = false; });
+  },
   async checkUpdates() {
     toast('Checking for updates…');
     const r = await GYUpdate.check();
@@ -1258,6 +1343,7 @@ document.addEventListener('keydown', e => {
 });
 
 /* ---------- boot ---------- */
+if (CAN_NOTIFY) { post('notifyStatus'); setInterval(syncReminders, 6 * 3600e3); addEventListener('focus', () => post('notifyStatus')); }
 Scene.setSparkles(S.settings.sparkles !== false);
 Amb.restore(S.settings.sound);
 Scene.setRain(Amb.get('rain').on);

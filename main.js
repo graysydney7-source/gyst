@@ -1,6 +1,7 @@
 // GYST — native macOS shell (JavaScript for Automation applet hosting a WKWebView).
 ObjC.import('Cocoa');
 ObjC.import('WebKit');
+ObjC.import('UserNotifications');
 
 var win = null, web = null, bridge = null;
 var fm = $.NSFileManager.defaultManager;
@@ -60,7 +61,41 @@ function installUpdate(json) {
   }
   fm.removeItemAtPathError($(appDir), null);
   fm.moveItemAtPathToPathError($(tmp), $(appDir), null);
-  web.evaluateJavaScriptCompletionHandler($('window.GYUpdate && GYUpdate.ready(' + (+u.version) + ')'), null);
+  web.evaluateJavaScriptCompletionHandler($('window.GYUpdate && GYUpdate.ready(' + (+u.version) + ')'), function (r, e) { });
+}
+
+/* ---------- notifications ---------- */
+// UNUserNotificationCenter callbacks arrive off the main thread; hop back before touching the web view
+ObjC.registerSubclass({
+  name: 'GYMain',
+  superclass: 'NSObject',
+  methods: { 'runJS:': { types: ['void', ['id']], implementation: function (js) { if (web) web.evaluateJavaScriptCompletionHandler(js, function (r, e) { }); } } }
+});
+var mainRunner = $.GYMain.alloc.init;
+function toWeb(js) { mainRunner.performSelectorOnMainThreadWithObjectWaitUntilDone('runJS:', $(js), false); }
+function center() { return $.UNUserNotificationCenter.currentNotificationCenter; }
+function notifyStatus() {
+  center().getNotificationSettingsWithCompletionHandler(function (st) {
+    var s = ['notDetermined', 'denied', 'granted', 'granted', 'granted'][+st.authorizationStatus] || 'notDetermined';
+    toWeb('window.GYNotify && GYNotify.status(' + JSON.stringify(s) + ')');
+  });
+}
+function notifyRequest() {
+  center().requestAuthorizationWithOptionsCompletionHandler(1 | 2 | 4, function (granted, err) { notifyStatus(); });
+}
+function notifyAdd(n) {
+  var at = $.NSDate.dateWithTimeIntervalSince1970(n.at / 1000);
+  var comps = $.NSCalendar.currentCalendar.componentsFromDate(4 | 8 | 16 | 32 | 64 | 128, at); // year month day hour minute second
+  var ct = $.UNMutableNotificationContent.alloc.init;
+  ct.title = $(String(n.title || 'GYST')); ct.body = $(String(n.body || '')); ct.sound = $.UNNotificationSound.defaultSound;
+  var tr = $.UNCalendarNotificationTrigger.triggerWithDateMatchingComponentsRepeats(comps, false);
+  center().addNotificationRequestWithCompletionHandler($.UNNotificationRequest.requestWithIdentifierContentTrigger($(String(n.id)), ct, tr), function (e) { });
+}
+// replaces every pending reminder with the list the web side computed
+function notifySchedule(json) {
+  var list = JSON.parse(json), now = Date.now();
+  center().removeAllPendingNotificationRequests;
+  list.filter(function (n) { return n.at > now + 5000; }).slice(0, 60).forEach(notifyAdd);
 }
 
 ObjC.registerSubclass({
@@ -82,6 +117,16 @@ ObjC.registerSubclass({
           } else if (name === 'openURL') {
             var u = message.body.js;
             if (/^https?:\/\//i.test(u)) $.NSWorkspace.sharedWorkspace.openURL($.NSURL.URLWithString($(u)));
+          } else if (name === 'notifyStatus') {
+            notifyStatus();
+          } else if (name === 'notifyRequest') {
+            notifyRequest();
+          } else if (name === 'notifySchedule') {
+            notifySchedule(message.body.js);
+          } else if (name === 'notifyTest') {
+            notifyAdd({ id: 'gyst-test', at: Date.now() + 4000, title: 'GYST 🎀', body: 'Notifications are on. You’ve got this.' });
+          } else if (name === 'notifySettings') {
+            $.NSWorkspace.sharedWorkspace.openURL($.NSURL.URLWithString($('x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=com.gyst.planner')));
           } else if (name === 'booted') {
             if (bootTimer) { bootTimer.invalidate; bootTimer = null; }
           } else if (name === 'installUpdate') {
@@ -93,7 +138,7 @@ ObjC.registerSubclass({
             op.allowsMultipleSelection = false;
             if (op.runModal == 1) {
               var txt = readFile(op.URLs.objectAtIndex(0).path.js);
-              if (txt) web.evaluateJavaScriptCompletionHandler($('GY.importData(' + JSON.stringify(txt) + ')'), null);
+              if (txt) web.evaluateJavaScriptCompletionHandler($('GY.importData(' + JSON.stringify(txt) + ')'), function (r, e) { });
             }
           }
         } catch (e) { }
@@ -147,7 +192,7 @@ function run() {
   var config = $.WKWebViewConfiguration.alloc.init;
   ucc = config.userContentController;
   bridge = $.GYBridge.alloc.init;
-  ['save', 'exportData', 'importData', 'openURL', 'booted', 'installUpdate', 'reloadApp'].forEach(function (n) { ucc.addScriptMessageHandlerName(bridge, n); });
+  ['save', 'exportData', 'importData', 'openURL', 'booted', 'installUpdate', 'reloadApp', 'notifyStatus', 'notifyRequest', 'notifySchedule', 'notifyTest', 'notifySettings'].forEach(function (n) { ucc.addScriptMessageHandlerName(bridge, n); });
   try { config.mediaTypesRequiringUserActionForPlayback = 0; } catch (e) { }
   try { config.preferences.inactiveSchedulingPolicy = 2; } catch (e) { }
 
