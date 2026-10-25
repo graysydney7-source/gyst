@@ -1,6 +1,6 @@
 /* GYST — checks GitHub for a newer version of the app's web files and hands it to the native shell. */
 (() => {
-  const BASE = 'https://raw.githubusercontent.com/graysydney7/gyst/main/web/';
+  const BASE = 'https://raw.githubusercontent.com/wildcardinc/gyst/main/web/';
   const NATIVE = !!window.__GY_NATIVE, CUR = window.__GY_WEB_VERSION || 0;
   let pending = 0, busy = false;
 
