@@ -471,3 +471,6 @@ select.move { padding: 4px 22px 4px 9px; font-size: 11.5px; border-radius: 99px;
 #update-banner { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 65; display: flex; align-items: center; gap: 12px; padding: 8px 8px 8px 18px; border-radius: 99px; background: var(--card-2); border: 1px solid var(--line); box-shadow: var(--shadow); font-size: 13.5px; animation: rise .4s ease; max-width: calc(100vw - 40px); }
 #update-banner i { color: var(--ink-2); }
 #update-banner button { border: 0; border-radius: 99px; padding: 6px 14px; background: linear-gradient(180deg, #eea3b6, #df7f99); color: #fff; font-weight: 600; }
+
+/* two-tap delete */
+.armed { background: #c4485e !important; color: #fff !important; border-color: transparent !important; opacity: 1 !important; width: auto !important; padding: 4px 10px; border-radius: 99px; white-space: nowrap; font-size: 12px; gap: 5px; }

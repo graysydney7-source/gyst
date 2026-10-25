@@ -922,12 +922,18 @@ function modal({ title, body, submit = 'Save', onSubmit, del }) {
     <div class="modal-actions">${del ? `<button type="button" class="btn ghost danger" data-modal-del>${I.trash} Delete</button>` : ''}<span style="flex:1"></span><button type="button" class="btn ghost" data-act="closeModal">Cancel</button><button class="btn primary">${submit}</button></div></form></div>`;
   const form = root.querySelector('form');
   form.addEventListener('submit', e => { e.preventDefault(); const fd = Object.fromEntries(new FormData(form)); fd._all = new FormData(form); if (onSubmit(fd, form) !== false) { closeModal(); save(); render(); } });
-  if (del) form.querySelector('[data-modal-del]').addEventListener('click', () => { if (confirm('Delete this? This can’t be undone.')) { del(); closeModal(); save(); render(); } });
+  if (del) form.querySelector('[data-modal-del]').addEventListener('click', e => confirmTap(e.currentTarget, 'Tap again to delete', () => { del(); closeModal(); save(); render(); }));
   root.querySelector('.modal-back').addEventListener('mousedown', e => { if (e.target.classList.contains('modal-back')) closeModal(); });
   setTimeout(() => { const f = form.querySelector('input:not([type=hidden]):not([type=radio]):not([type=checkbox]),textarea'); if (f) f.focus(); }, 30);
   return form;
 }
 function closeModal() { $('#modal-root').innerHTML = ''; }
+// two-tap confirm: the app's web view can't show confirm() dialogs, so the button asks instead
+function confirmTap(btn, label, onYes) {
+  if (btn.dataset.armed) { clearTimeout(btn._t); onYes(); return; }
+  btn.dataset.armed = '1'; btn._html = btn.innerHTML; btn.classList.add('armed'); btn.innerHTML = `${I.trash} ${label}`;
+  btn._t = setTimeout(() => { delete btn.dataset.armed; btn.classList.remove('armed'); btn.innerHTML = btn._html; }, 3500);
+}
 const fld = (label, html) => `<label class="f"><span>${label}</span>${html}</label>`;
 const swatches = (name, val) => `<div class="swatches">${COLORS.map(c => `<label><input type="radio" name="${name}" value="${c}" ${c === val ? 'checked' : ''}><i style="--c:${c}"></i></label>`).join('')}</div>`;
 const safeUrl = u => { u = (u || '').trim(); if (!u) return ''; if (!/^https?:\/\//i.test(u)) u = 'https://' + u; return u; };
@@ -1088,7 +1094,7 @@ const A = {
   clearGroc() { S.grocery = S.grocery.filter(g => !g.done); save(); render(); },
 
   toggleHabit(el) { const h = byId(S.habits, el.dataset.id), k = el.dataset.date; if (h.log[k]) delete h.log[k]; else { h.log[k] = true; burst(el); } save(); render(); },
-  delHabit(el) { if (!confirm('Remove this habit and its history?')) return; S.habits = S.habits.filter(h => h.id !== el.dataset.id); save(); render(); },
+  delHabit(el) { confirmTap(el, 'Delete?', () => { S.habits = S.habits.filter(h => h.id !== el.dataset.id); save(); render(); }); },
   water(el) { const t = today(), i = +el.dataset.i; S.water[t] = (S.water[t] || 0) === i + 1 ? i : i + 1; if (S.water[t] === (S.settings.waterGoal || 8)) { burst(el); toast('💧 Hydration goal reached. Glowing.'); } save(); render(); },
   setMood(el) { const k = el.dataset.date, j = S.journal[k] = S.journal[k] || {}, i = +el.dataset.i; j.mood = j.mood === i ? null : i; save(); render(); },
 
